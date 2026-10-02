@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <h1>X AI 翻译器</h1>
+
+  <label class="row toggle-row">
+    <span>启用自动翻译</span>
+    <input type="checkbox" id="enabled" />
+  </label>
+
+  <label class="row">
+    <span>服务地址（OpenAI 兼容 baseURL）</span>
+    <input type="text" id="baseURL" placeholder="例如 http://localhost:8000/v1" />
+  </label>
+
+  <label class="row">
+    <span>API Key（vLLM 未设鉴权可留空）</span>
+    <input type="password" id="apiKey" placeholder="sk-..." autocomplete="off" />
+  </label>
+
+  <div class="row">
+    <span>模型</span>
+    <div class="model-row">
+      <input type="text" id="model" list="modelList" placeholder="模型名" />
+      <datalist id="modelList"></datalist>
+      <button id="btnModels" type="button" title="从服务拉取模型列表">拉取</button>
+    </div>
+  </div>
+
+  <label class="row">
+    <span>目标语言</span>
+    <select id="targetLang">
+      <option>简体中文</option>
+      <option>繁體中文</option>
+      <option>English</option>
+      <option>日本語</option>
+      <option>한국어</option>
+    </select>
+  </label>
+
+  <button id="btnSave" class="primary">保存</button>
+  <div id="status" class="status"></div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

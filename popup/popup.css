@@ -1,0 +1,113 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  width: 320px;
+  padding: 14px;
+  background: #ffffff;
+  color: #0f1419;
+  font-size: 13px;
+  font-family: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+
+h1 {
+  font-size: 15px;
+  margin-bottom: 12px;
+}
+
+.row {
+  display: block;
+  margin-bottom: 11px;
+}
+
+.row > span {
+  display: block;
+  margin-bottom: 4px;
+  color: #536471;
+}
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.toggle-row > span {
+  margin-bottom: 0;
+}
+
+input[type="text"],
+input[type="password"],
+select {
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid #cfd9de;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #0f1419;
+  font-size: 13px;
+}
+
+input:focus,
+select:focus {
+  outline: none;
+  border-color: #1d9bf0;
+  box-shadow: 0 0 0 1px #1d9bf0;
+}
+
+input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: #1d9bf0;
+}
+
+.model-row {
+  display: flex;
+  gap: 6px;
+}
+
+.model-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+button {
+  padding: 7px 12px;
+  border: 1px solid #cfd9de;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #0f1419;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #f7f9f9;
+}
+
+button.primary {
+  width: 100%;
+  margin-top: 4px;
+  background: #0f1419;
+  border-color: #0f1419;
+  color: #ffffff;
+  font-weight: 600;
+}
+
+button.primary:hover {
+  background: #272c36;
+}
+
+.status {
+  min-height: 16px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: #00ba7c;
+}
+
+.status.error {
+  color: #f4212e;
+}

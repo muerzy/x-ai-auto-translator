@@ -1,0 +1,42 @@
+/* 译文样式：继承推文原色（自动适配暗色/亮色主题），
+   浅色背景块凸显译文，颜色由 currentColor 混出——亮色主题浅灰、暗色主题浅白 */
+
+.xat-translation {
+  margin-top: 6px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: color-mix(in srgb, currentColor 7%, transparent);
+  color: inherit;
+  /* 字号/行高/字体由 JS 内联继承原推文的计算样式，此处不再写死 */
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+.xat-translation::before {
+  content: "译";
+  display: inline-block;
+  font-size: 0.72em;
+  line-height: 1;
+  padding: 2px 5px;
+  margin-right: 7px;
+  border-radius: 4px;
+  vertical-align: 1px;
+  background: color-mix(in srgb, currentColor 15%, transparent);
+}
+
+.xat-translation a {
+  color: #1d9bf0; /* X 的链接蓝 */
+  text-decoration: none;
+}
+
+.xat-translation a:hover {
+  text-decoration: underline;
+}
+
+.xat-error {
+  margin-top: 4px;
+  font-size: 0.82em;
+  color: #e06c75;
+  cursor: pointer;
+  user-select: none;
+}
