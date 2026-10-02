@@ -1,37 +1,29 @@
-/* 译文样式：继承推文原色（自动适配暗色/亮色主题），
-   浅色背景块凸显译文，颜色由 currentColor 混出——亮色主题浅灰、暗色主题浅白 */
+/* 译文样式：主路径是「克隆原帖 DOM」——结构/链接/字号/换行全部继承 X 原生样式，
+   这里只叠加浅色背景块与「译」角标；纯文本兜底路径额外用 pre-wrap 保留换行 */
 
 .xat-translation {
-  margin-top: 6px;
-  padding: 8px 10px;
-  border-radius: 10px;
-  background: color-mix(in srgb, currentColor 7%, transparent);
-  color: inherit;
-  /* 字号/行高/字体由 JS 内联继承原推文的计算样式，此处不再写死 */
+  /* !important：克隆元素带 X 原生 class，其样式表运行时后加载会覆盖同名属性 */
+  margin-top: 6px !important;
+  padding: 8px 10px !important;
+  border-radius: 10px !important;
+  background: color-mix(in srgb, currentColor 7%, transparent) !important;
   white-space: pre-wrap;
   overflow-wrap: break-word;
 }
 
 .xat-translation::before {
-  content: "译";
-  display: inline-block;
-  font-size: 0.72em;
-  line-height: 1;
-  padding: 2px 5px;
-  margin-right: 7px;
-  border-radius: 4px;
-  vertical-align: 1px;
-  background: color-mix(in srgb, currentColor 15%, transparent);
+  content: "译" !important;
+  display: inline-block !important;
+  font-size: 0.72em !important;
+  line-height: 1 !important;
+  padding: 2px 5px !important;
+  margin-right: 7px !important;
+  border-radius: 4px !important;
+  vertical-align: 1px !important;
+  background: color-mix(in srgb, currentColor 15%, transparent) !important;
 }
 
-.xat-translation a {
-  color: #1d9bf0; /* X 的链接蓝 */
-  text-decoration: none;
-}
-
-.xat-translation a:hover {
-  text-decoration: underline;
-}
+/* 链接不写规则：克隆路径由 X 原生链接样式接管，与原帖完全一致 */
 
 .xat-error {
   margin-top: 4px;
@@ -39,4 +31,51 @@
   color: #e06c75;
   cursor: pointer;
   user-select: none;
+}
+
+/* 手动模式的「翻译帖子」按钮：X 链接风格 */
+
+.xat-btn {
+  margin-top: 4px;
+  margin-left: auto; /* 普通流布局下推到右侧 */
+  align-self: flex-end; /* 父容器为 flex 列布局时靠右 */
+  display: block;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: 0.85em;
+  color: #1d9bf0;
+  cursor: pointer;
+  user-select: none;
+}
+
+.xat-btn:hover {
+  text-decoration: underline;
+}
+
+/* 翻译进行中的加载指示：小 spinner + 文字，颜色随主题 */
+
+.xat-loading {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.82em;
+  opacity: 0.65;
+}
+
+.xat-loading-spinner {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-top-color: currentColor;
+  animation: xat-spin 0.7s linear infinite;
+}
+
+@keyframes xat-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }

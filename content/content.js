@@ -1,30 +1,33 @@
 // X AI 翻译器 - content script
-// 职责：发现页面上的推文文本（data-testid="tweetText"），
-// 进入视口后加入翻译队列，批量发给 service worker，把译文插在原文下方。
-// X 是 React SPA 且虚拟滚动：用 MutationObserver 发现新节点 +
-// IntersectionObserver 只翻译进入视口的 + 按原文内容去重与缓存命中。
+// 职责：发现推文（data-testid="tweetText"），滚入视口后按「文本节点」粒度翻译。
+// 译文以克隆原帖 DOM 的方式插入：结构与原帖完全一致（链接/换行/样式原生复刻），
+// 只把文字节点替换为译文；请求期间结构变化时退回纯文本插入兜底。
+// 两种模式：自动翻译（滚入视口即翻）/ 手动模式（帖子底部显示「翻译帖子」按钮）。
 
 const TWEET_TEXT_SEL = '[data-testid="tweetText"]';
+const BIO_SEL = '[data-testid="UserDescription"]'; // 个人主页/资料卡片的简介
+const TARGET_SEL = `${TWEET_TEXT_SEL}, ${BIO_SEL}`;
 const SCAN_DEBOUNCE_MS = 150;
 const FLUSH_INTERVAL_MS = 300;
 
-let enabled = false;
+let autoMode = true; // 设置里的 enabled：true=自动翻译，false=显示手动翻译按钮
 let mo = null;
 let io = null;
 let scanTimer = null;
 let flushTimer = null;
 let seq = 0;
-const textToId = new Map(); // 原文 -> id，同文本多处展示共用一个翻译结果
-const pending = new Map(); // id -> 原文，等待发请求
+const textToId = new Map(); // 原文 -> 推文 id，同文本多处展示共用一份翻译
+const pending = new Map(); // 片段 id（"推文id:序号"）-> 片段文本，等待发请求
 const lastText = new WeakMap(); // 元素 -> 翻译发起时的规范化文本，用于检测文本变化
+const segPending = new Map(); // 推文 id -> { total, got, segs: [译文|null] }
 
 // ---------- 启动 / 停止 ----------
 
 async function init() {
   try {
     const { settings } = await chrome.storage.local.get("settings");
-    enabled = (settings?.enabled ?? true) !== false;
-    if (enabled) start();
+    autoMode = (settings?.enabled ?? true) !== false;
+    start();
 
     chrome.runtime.onMessage.addListener((msg) => {
       if (msg?.type === "settingsUpdated") applySettings();
@@ -36,13 +39,21 @@ async function init() {
 
 async function applySettings() {
   const { settings } = await chrome.storage.local.get("settings");
-  const nowEnabled = (settings?.enabled ?? true) !== false;
-  if (nowEnabled && !enabled) {
-    enabled = true;
-    start();
-  } else if (!nowEnabled && enabled) {
-    enabled = false;
-    stop();
+  const nowAuto = (settings?.enabled ?? true) !== false;
+  if (nowAuto === autoMode) return;
+  autoMode = nowAuto;
+
+  if (nowAuto) {
+    // 手动 → 自动：移除所有翻译按钮，manual 状态的推文重走自动流程
+    for (const el of document.querySelectorAll(TARGET_SEL)) {
+      if (el.dataset.xatState === "manual") {
+        removeTranslateBtn(el);
+        delete el.dataset.xatState;
+      }
+    }
+  } else {
+    // 自动 → 手动：等待中的翻译正常完成，未处理的推文由 scan 补按钮
+    scheduleScan();
   }
 }
 
@@ -72,6 +83,28 @@ function stop() {
   clearTimeout(scanTimer);
   clearTimeout(flushTimer);
   pending.clear();
+  segPending.clear();
+  document.querySelectorAll(".xat-loading").forEach((e) => e.remove());
+  document.querySelectorAll(".xat-btn").forEach((e) => e.remove());
+}
+
+// 手动模式的「翻译帖子」按钮
+
+function buildTranslateBtn(el) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "xat-btn";
+  btn.textContent = el.matches(BIO_SEL) ? "翻译简介" : "翻译帖子";
+  btn.addEventListener("click", () => {
+    removeTranslateBtn(el);
+    enqueue(el); // 进入与自动模式相同的翻译流程（含 loading/译文渲染）
+  });
+  return btn;
+}
+
+function removeTranslateBtn(el) {
+  const sib = el.nextElementSibling;
+  if (sib?.classList.contains("xat-btn")) sib.remove();
 }
 
 // ---------- 发现推文 ----------
@@ -82,15 +115,15 @@ function scheduleScan() {
 }
 
 function scan() {
-  if (!enabled) return;
-  for (const el of document.querySelectorAll(TWEET_TEXT_SEL)) {
+  for (const el of document.querySelectorAll(TARGET_SEL)) {
     if (el.dataset.xatState === "wait") continue; // 翻译进行中，不重复触发
     const norm = normText(el);
 
     if (el.dataset.xatState) {
-      // 已处理过：文本没变就跳过；变了（如点击「显示更多」展开全文）清掉旧译文重翻
+      // 已处理过：文本没变就跳过；变了（如点击「显示更多」展开全文）清掉旧结果重来
       if (lastText.get(el) === norm) continue;
       removeStaleResult(el);
+      removeTranslateBtn(el);
       delete el.dataset.xatState;
     }
 
@@ -101,17 +134,26 @@ function scan() {
       lastText.set(el, norm);
       continue;
     }
-    el.dataset.xatState = "wait";
-    io.observe(el);
+    if (autoMode) {
+      el.dataset.xatState = "wait";
+      io.observe(el);
+    } else {
+      // 手动模式：帖子底部显示「翻译帖子」按钮，点击才翻译
+      el.dataset.xatState = "manual";
+      lastText.set(el, norm);
+      el.insertAdjacentElement("afterend", buildTranslateBtn(el));
+    }
   }
 }
 
-// 移除元素后面紧跟的旧译文/错误提示（文本变化后旧结果已失效）
+// 移除元素后面紧跟的旧译文/错误提示/加载动画（文本变化后旧结果已失效）
 function removeStaleResult(el) {
   let sib = el.nextElementSibling;
   while (
     sib &&
-    (sib.classList.contains("xat-translation") || sib.classList.contains("xat-error"))
+    (sib.classList.contains("xat-translation") ||
+      sib.classList.contains("xat-error") ||
+      sib.classList.contains("xat-loading"))
   ) {
     const next = sib.nextElementSibling;
     sib.remove();
@@ -122,6 +164,7 @@ function removeStaleResult(el) {
 // ---------- 入队与发送 ----------
 
 function enqueue(el) {
+  removeTranslateBtn(el); // 手动模式点击按钮进入时移除按钮
   // 此时元素可见，innerText 能取到真实换行
   const text = (el.innerText || el.textContent || "").trim();
   const norm = normText(el);
@@ -138,7 +181,21 @@ function enqueue(el) {
     textToId.set(text, id);
   }
   el.dataset.xatId = id;
-  pending.set(id, text);
+
+  // 按文本节点切片段：链接/换行等结构不进模型，渲染时原样复刻
+  const segs = collectSegments(el);
+  if (segs.length === 0) {
+    // 纯符号/emoji 推文，没有可翻译文字
+    el.dataset.xatState = "done";
+    return;
+  }
+  if (!segPending.has(id)) {
+    segPending.set(id, { total: segs.length, got: 0, segs: new Array(segs.length).fill(undefined) });
+    segs.forEach((s, i) => pending.set(`${id}:${i}`, s));
+  }
+  el.dataset.xatState = "wait"; // 手动路径由 enqueue 设状态（自动路径 scan 已设，重复无害）
+  removeLoading(el); // 防重复（重试/重翻场景）
+  el.insertAdjacentElement("afterend", buildLoadingEl());
   scheduleFlush();
 }
 
@@ -148,7 +205,7 @@ function scheduleFlush() {
 }
 
 function flush() {
-  if (!enabled || pending.size === 0) return;
+  if (pending.size === 0) return;
   if (!contextValid()) return silentStop();
 
   const items = [...pending].map(([id, text]) => ({ id, text }));
@@ -159,11 +216,10 @@ function flush() {
       if (chrome.runtime.lastError || !resp || resp.error) {
         const reason = resp?.error || chrome.runtime.lastError?.message;
         console.warn("[X AI 翻译器] 翻译请求失败：", reason);
-        for (const it of items) markError(it.id, reason);
+        for (const it of items) markError(tweetIdOf(it.id), reason);
         return;
       }
-      const textById = new Map(items.map((it) => [it.id, it.text]));
-      for (const r of resp.results || []) applyResult(r, textById.get(r.id));
+      for (const r of resp.results || []) applyResult(r);
       // 兜底：请求在途期间文本可能已变化（如点了「显示更多」），主动复查一轮
       scheduleScan();
     });
@@ -173,35 +229,55 @@ function flush() {
   }
 }
 
-// 扩展上下文是否仍然有效（重新加载/更新扩展后，旧 content script 的 chrome.runtime 会失效）
-function contextValid() {
-  return !!chrome.runtime?.id;
-}
-
-// 上下文失效后旧脚本安静停摆，不再对页面报错
-function silentStop() {
-  stop();
-  console.info("[X AI 翻译器] 扩展已重新加载，请刷新 x.com 页面以恢复翻译");
-}
-
 // ---------- 渲染结果 ----------
 
-function applyResult({ id, translated }, srcText) {
-  const els = document.querySelectorAll(`[data-xat-id="${id}"]`);
-  // 模型原样返回（纯符号/表情等无可翻内容，或模型复读）时不插入译文块
-  const echoed =
-    translated != null &&
-    srcText != null &&
-    translated.replace(/\s+/g, " ").trim() === srcText.replace(/\s+/g, " ").trim();
-  if (echoed) console.warn("[X AI 翻译器] 模型未翻译此条，原样返回：", srcText.slice(0, 50));
-  for (const el of els) {
+function applyResult({ id, translated }) {
+  const tweetId = tweetIdOf(id);
+  const idx = Number(id.slice(tweetId.length + 1));
+  const st = segPending.get(tweetId);
+  if (!st || Number.isNaN(idx) || idx >= st.total || st.segs[idx] !== undefined) return;
+  st.segs[idx] = translated;
+  if (++st.got >= st.total) {
+    segPending.delete(tweetId);
+    renderTranslation(tweetId, st.segs);
+  }
+}
+
+// 译文 DOM = 原帖 DOM 的克隆：结构、链接、换行、样式与原帖完全一致，仅文字为译文
+function renderTranslation(tweetId, segs) {
+  for (const el of document.querySelectorAll(`[data-xat-id="${tweetId}"]`)) {
     if (el.dataset.xatState !== "wait") continue;
-    if (translated == null) {
-      markError(id, null, el);
+
+    if (segs.every((s) => s == null)) {
+      markError(tweetId, null, el);
       continue;
     }
+
+    const clone = el.cloneNode(true);
+    // 移除识别标记，防止被 scan 与 X 的测试选择器重复命中；去掉 lang 避免误判语言
+    clone.removeAttribute("data-testid");
+    clone.removeAttribute("data-xat-id");
+    clone.removeAttribute("lang");
+    clone.classList.add("xat-translation");
+
+    const nodes = collectTextNodes(clone);
+    if (nodes.length !== segs.length) {
+      // 请求期间原帖结构已变化：退回纯文本插入，保证至少有译文
+      const joined = segs.filter(Boolean).join(" ");
+      if (joined) el.insertAdjacentElement("afterend", buildTranslationEl(joined, el));
+      else markError(tweetId, null, el);
+      removeLoading(el);
+      continue;
+    }
+    nodes.forEach((n, i) => {
+      const raw = n.nodeValue;
+      const lead = raw.match(/^\s*/)[0];
+      const trail = raw.match(/\s*$/)[0];
+      n.nodeValue = lead + (segs[i] ?? raw.trim()) + trail; // 失败片段回填原文
+    });
     el.dataset.xatState = "done";
-    if (!echoed) el.insertAdjacentElement("afterend", buildTranslationEl(translated, el));
+    removeLoading(el);
+    el.insertAdjacentElement("afterend", clone);
   }
 }
 
@@ -213,6 +289,7 @@ function markError(id, reason, oneEl) {
       );
   for (const el of els) {
     el.dataset.xatState = "error";
+    removeLoading(el);
     const errEl = buildErrorEl(reason);
     errEl.addEventListener("click", () => {
       // 点击重试：清掉错误标记，重新走观察流程
@@ -224,11 +301,30 @@ function markError(id, reason, oneEl) {
   }
 }
 
+// 翻译进行中的加载指示
+
+function buildLoadingEl() {
+  const div = document.createElement("div");
+  div.className = "xat-loading";
+  const spinner = document.createElement("span");
+  spinner.className = "xat-loading-spinner";
+  div.appendChild(spinner);
+  div.appendChild(document.createTextNode("翻译中…"));
+  return div;
+}
+
+function removeLoading(el) {
+  const sib = el.nextElementSibling;
+  if (sib?.classList.contains("xat-loading")) sib.remove();
+}
+
+// ---------- 兜底的纯文本译文（结构变化时使用） ----------
+
 function buildTranslationEl(translated, refEl) {
   const div = document.createElement("div");
   div.className = "xat-translation";
   renderRichText(div, translated); // 文本节点拼接，天然防注入，保留换行（CSS pre-wrap）
-  // 排版跟随原推文：字号/行高/字体与原文完全一致（时间线、引用推文等不同上下文都能适配）
+  // 排版跟随原推文：字号/行高/字体与原文完全一致
   if (refEl) {
     const cs = getComputedStyle(refEl);
     div.style.fontSize = cs.fontSize;
@@ -264,6 +360,8 @@ function buildLink(token) {
     a.href = "https://x.com/search?q=" + encodeURIComponent(token);
   } else {
     a.href = token; // 正则限定 http(s):// 开头，无脚本协议风险
+    // 显示文本去掉协议前缀，与 X 原帖的链接显示习惯一致（href 仍为完整地址）
+    token = token.replace(/^https?:\/\//, "");
   }
   a.textContent = token;
   a.target = "_blank";
@@ -280,6 +378,34 @@ function buildErrorEl(reason) {
 }
 
 // ---------- 工具 ----------
+
+const tweetIdOf = (segId) => segId.split(":")[0];
+
+// 收集「可翻译文本节点」（文档顺序）：有字母/文字的非空白文本；
+// 链接 <a> 内的文本（@提及、#话题、URL 显示文本）不翻，保持原样
+function collectTextNodes(root) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) => {
+      let p = n.parentElement;
+      while (p && p !== root) {
+        if (p.tagName === "A") return NodeFilter.FILTER_REJECT;
+        p = p.parentElement;
+      }
+      return NodeFilter.FILTER_ACCEPT;
+    },
+  });
+  const nodes = [];
+  let n;
+  while ((n = walker.nextNode())) {
+    const core = n.nodeValue.trim();
+    if (core && /\p{L}/u.test(core) && !isChineseText(core)) nodes.push(n);
+  }
+  return nodes;
+}
+
+function collectSegments(el) {
+  return collectTextNodes(el).map((n) => n.nodeValue.trim());
+}
 
 // 规范化文本作为「变化检测」基准：textContent 不受可见性影响、不触发重排，
 // 压平空白后比较，与翻译用的 innerText 分开，避免虚拟滚动隐藏时误判变化
@@ -313,6 +439,17 @@ function isChineseText(text) {
     }
   }
   return han / chars.length > 0.5;
+}
+
+// 扩展上下文是否仍然有效（重新加载/更新扩展后，旧 content script 的 chrome.runtime 会失效）
+function contextValid() {
+  return !!chrome.runtime?.id;
+}
+
+// 上下文失效后旧脚本安静停摆，不再对页面报错
+function silentStop() {
+  stop();
+  console.info("[X AI 翻译器] 扩展已重新加载，请刷新 x.com 页面以恢复翻译");
 }
 
 init();

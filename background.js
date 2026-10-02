@@ -48,7 +48,7 @@ function errText(e) {
 
 async function handleTranslate(items) {
   const settings = await getSettings();
-  if (!settings.enabled) return { results: [] };
+  // 注意：enabled 表示「自动翻译」模式开关，手动模式（按钮点击）同样允许翻译
   if (!settings.baseURL || !settings.model) {
     throw new Error("请先在插件弹窗里配置服务地址和模型名");
   }
@@ -85,10 +85,20 @@ async function handleTranslate(items) {
 
 // 翻译一组文本，返回与输入对齐的数组（null = 失败）
 async function translateTexts(texts, settings) {
+  const enc = texts.map(encodeText);
   try {
-    const output = await chat(settings, buildUserPrompt(texts, settings.targetLang));
+    const output = await chat(
+      settings,
+      buildUserPrompt(
+        enc.map((e) => e.encoded),
+        settings.targetLang
+      )
+    );
     const map = parseNumbered(output);
-    const out = texts.map((_, i) => map.get(i + 1) ?? null);
+    const out = enc.map((e, i) => {
+      const t = map.get(i + 1);
+      return t == null ? null : decodeText(t, e.tokens);
+    });
     if (out.every((x) => x != null)) return out;
     // 有缺号：对缺失的逐条重试
     for (let i = 0; i < out.length; i++) {
@@ -105,17 +115,54 @@ async function translateTexts(texts, settings) {
 }
 
 async function translateSingle(text, settings) {
+  const { encoded, tokens } = encodeText(text);
   try {
-    const output = await chat(settings, buildUserPrompt([text], settings.targetLang));
+    const output = await chat(settings, buildUserPrompt([encoded], settings.targetLang));
     const parsed = parseNumbered(output).get(1);
-    if (parsed != null) return parsed;
-    // 模型没按 <<1>> 格式输出时，把整段输出当译文（去掉首尾引号）
+    if (parsed != null) return decodeText(parsed, tokens);
+    // 模型没按 <<1>> 格式输出时，把整段输出当译文（去掉首尾引号）后解码
     const fallback = String(output).trim().replace(/^["“']+|["”']+$/g, "");
-    return fallback || null;
+    return fallback ? decodeText(fallback, tokens) : null;
   } catch (e) {
     console.warn("[X AI 翻译器] 单条翻译失败：", errText(e));
     return null;
   }
+}
+
+// ---------- 占位符保护：emoji / URL / @提及 / #话题 不进模型，代码保证原位复刻 ----------
+
+const PROTECTED_RE = new RegExp(
+  [
+    "https?://[^\\s，。；、！？）)】」』\"']+", // URL
+    "[@＠][A-Za-z0-9_.]+", // @提及
+    "[#＃][A-Za-z0-9_\\u4e00-\\u9fff\\u3040-\\u30ff]+", // #话题
+    "\\p{Extended_Pictographic}(?:\\uFE0F|\\u{1F3FB}|\\u{1F3FC}|\\u{1F3FD}|\\u{1F3FE}|\\u{1F3FF}|\\u200D\\p{Extended_Pictographic})*", // emoji 序列（含变体选择符/肤色/ZWJ 组合）
+  ].join("|"),
+  "gu"
+);
+
+// 把受保护内容替换为 ⟦n⟧ 占位符，返回编码后文本与 token 表
+function encodeText(text) {
+  const tokens = [];
+  const encoded = text.replace(PROTECTED_RE, (m) => {
+    tokens.push(m);
+    return `⟦${tokens.length}⟧`;
+  });
+  return { encoded, tokens };
+}
+
+// 把译文中的占位符换回原内容；模型吞掉的占位符按原顺序追加到末尾，保证零丢失
+function decodeText(translated, tokens) {
+  const restored = new Array(tokens.length).fill(false);
+  let out = String(translated).replace(/⟦\s*(\d+)\s*⟧/g, (m, i) => {
+    const idx = Number(i) - 1;
+    if (tokens[idx] == null) return m;
+    restored[idx] = true;
+    return tokens[idx];
+  });
+  const tail = tokens.filter((_, i) => !restored[i]);
+  if (tail.length) out = out.trimEnd() + (out ? " " : "") + tail.join(" ");
+  return out;
 }
 
 // ---------- Prompt 与解析 ----------
@@ -128,10 +175,11 @@ function buildUserPrompt(texts, targetLang) {
 
 规则：
 - 无论源语言是什么（英语、日语、韩语、法语、德语、俄语、西班牙语、阿拉伯语等），只要内容不是${targetLang}，就完整翻译成${targetLang}
-- 保留 @用户名 和 URL 原样不翻译；#话题标签 保留原文，可在后面用括号附上中文含义
-- 保留 emoji
+- 原文中的 ⟦数字⟧ 是占位符，代表原文里的 emoji、URL、@用户名或 #话题标签：必须原样保留在译文的对应位置，不得删除、改写、合并或新增
+- 占位符紧贴它修饰的文字，不要前后加空格或换行，也不要把它挪到行首/行尾单独成行（除非它在原文中本来就独占一行）
 - 保留原文的换行和分段：原文在哪里换行/空行，译文也在对应位置换行/空行
 - 网络俚语、缩写、梗优先翻译成地道的对应表达，必要处用括号加简短注释
+- 相邻编号的条目可能是同一条推文里被链接/表情分隔的连续文字，翻译时保持前后语义连贯
 - 若某条已经是${targetLang}，原样返回该条
 - 输出格式：每条译文紧跟 <<编号>> 之后，译文内部可以有换行，条与条之间用 <<编号>> 分隔，不要输出其他任何内容
 
