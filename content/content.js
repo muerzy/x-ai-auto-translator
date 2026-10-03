@@ -11,6 +11,7 @@ const SCAN_DEBOUNCE_MS = 150;
 const FLUSH_INTERVAL_MS = 300;
 
 let autoMode = true; // 设置里的 enabled：true=自动翻译，false=显示手动翻译按钮
+let voteButtons = true; // 帖子标记：关闭后帖子下方不显示 ⭐/👎 按钮
 let mo = null;
 let io = null;
 let scanTimer = null;
@@ -27,6 +28,7 @@ async function init() {
   try {
     const { settings } = await chrome.storage.local.get("settings");
     autoMode = (settings?.enabled ?? true) !== false;
+    voteButtons = settings?.voteButtonsEnabled !== false;
     start();
 
     chrome.runtime.onMessage.addListener((msg) => {
@@ -40,8 +42,14 @@ async function init() {
 async function applySettings() {
   const { settings } = await chrome.storage.local.get("settings");
   const nowAuto = (settings?.enabled ?? true) !== false;
-  if (nowAuto === autoMode) return;
+  const nowButtons = settings?.voteButtonsEnabled !== false;
+  if (nowAuto === autoMode && nowButtons === voteButtons) return;
   autoMode = nowAuto;
+
+  // 关闭标记按钮：移除页面上已有的投票栏，新帖子不再挂
+  voteButtons = nowButtons;
+  if (!nowButtons) document.querySelectorAll(".xat-votes").forEach((el) => el.remove());
+  else scheduleScan();
 
   if (nowAuto) {
     // 手动 → 自动：移除所有翻译按钮，manual 状态的推文重走自动流程
@@ -132,6 +140,7 @@ function scan() {
     if (lang.startsWith("zh") || !norm || norm.length < 2 || isChineseText(norm)) {
       el.dataset.xatState = "skip";
       lastText.set(el, norm);
+      if (voteButtons) attachVoteBar(el, norm); // 中文帖同样可标记有用/没用
       continue;
     }
     if (autoMode) {
@@ -144,16 +153,136 @@ function scan() {
       el.insertAdjacentElement("afterend", buildTranslateBtn(el));
     }
   }
+  scanPhotos();
 }
 
-// 移除元素后面紧跟的旧译文/错误提示/加载动画（文本变化后旧结果已失效）
+// ---------- 图片翻译：图片上的「翻译图片」按钮，点击后译文按坐标贴回原图 ----------
+
+function scanPhotos() {
+  for (const img of document.querySelectorAll('[data-testid="tweetPhoto"] img')) {
+    if (img.dataset.xatPhoto) continue;
+    const wrap = img.closest('[data-testid="tweetPhoto"]');
+    if (!wrap || !img.currentSrc) {
+      img.dataset.xatPhoto = "skip";
+      continue;
+    }
+    img.dataset.xatPhoto = "idle";
+    if (getComputedStyle(wrap).position === "static") wrap.classList.add("xat-photo-rel");
+    wrap.appendChild(buildPhotoBtn(img, wrap));
+  }
+}
+
+const photoState = new WeakMap(); // 图片容器 -> { payload, visible }，支持译文/原图切换
+
+function buildPhotoBtn(img, wrap) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "xat-photo-btn";
+  btn.textContent = "翻译图片";
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation(); // 别触发 X 的图片查看器
+    e.preventDefault();
+    if (btn.dataset.state === "loading") return;
+    // 已翻译：点击在译文贴图和原图之间切换
+    const st = photoState.get(wrap);
+    if (btn.dataset.state === "done" && st) {
+      st.visible = !st.visible;
+      wrap
+        .querySelectorAll(".xat-region, .xat-region-fallback")
+        .forEach((el) => (el.style.display = st.visible ? "" : "none"));
+      btn.textContent = st.visible ? "已翻译" : "显示译文";
+      return;
+    }
+    if (btn.dataset.state === "done") return;
+    translateImage(img, wrap, btn);
+  });
+  return btn;
+}
+
+function translateImage(img, wrap, btn) {
+  btn.dataset.state = "loading";
+  btn.textContent = "翻译中…";
+  const src = img.currentSrc || img.src;
+  chrome.runtime.sendMessage({ type: "ocrTranslate", src }, (resp) => {
+    if (chrome.runtime.lastError || !resp || resp.error) {
+      const reason = resp?.error || chrome.runtime.lastError?.message;
+      photoToast(wrap, reason || "翻译失败");
+      btn.dataset.state = "idle";
+      btn.textContent = "翻译图片";
+      return;
+    }
+    btn.dataset.state = "done";
+    btn.textContent = "已翻译";
+    photoState.set(wrap, { payload: resp, visible: true });
+    renderPhotoRegions(wrap, resp);
+  });
+}
+
+// 有坐标：逐块贴回原图位置；无坐标但有整段文本：贴在图片底部
+function renderPhotoRegions(wrap, { regions, text }) {
+  if (Array.isArray(regions) && regions.length) {
+    for (const r of regions) {
+      const [x1, y1, x2, y2] = r.box; // 0-1000 归一化
+      const div = document.createElement("div");
+      div.className = "xat-region";
+      div.style.left = x1 / 10 + "%";
+      div.style.top = y1 / 10 + "%";
+      div.style.width = (x2 - x1) / 10 + "%";
+      div.style.height = (y2 - y1) / 10 + "%";
+      div.textContent = r.dst;
+      wrap.appendChild(div);
+    }
+    fitRegionText(wrap); // 布局完成后按块高缩放字号
+    return;
+  }
+  if (text) {
+    const panel = document.createElement("div");
+    panel.className = "xat-region-fallback";
+    panel.textContent = text;
+    wrap.appendChild(panel);
+  }
+}
+
+// 按每个贴块的像素高度定字号，再逐级收缩到内容放得下为止（长数字/长词会折行）
+function fitRegionText(wrap) {
+  requestAnimationFrame(() => {
+    const h = wrap.clientHeight;
+    if (!h) return;
+    for (const div of wrap.querySelectorAll(".xat-region")) {
+      const boxH = (parseFloat(div.style.height) / 100) * h;
+      let fs = Math.max(10, Math.min(26, boxH * 0.72));
+      div.style.fontSize = fs + "px";
+      let guard = 8;
+      while (
+        guard-- > 0 &&
+        fs > 9 &&
+        (div.scrollWidth > div.clientWidth + 1 || div.scrollHeight > div.clientHeight + 1)
+      ) {
+        fs -= 1;
+        div.style.fontSize = fs + "px";
+      }
+    }
+  });
+}
+
+function photoToast(wrap, message) {
+  wrap.querySelectorAll(".xat-photo-toast").forEach((el) => el.remove());
+  const toast = document.createElement("div");
+  toast.className = "xat-photo-toast";
+  toast.textContent = message;
+  wrap.appendChild(toast);
+  setTimeout(() => toast.remove(), 4000);
+}
+
+// 移除元素后面紧跟的旧译文/错误提示/加载动画/投票栏（文本变化后旧结果已失效）
 function removeStaleResult(el) {
   let sib = el.nextElementSibling;
   while (
     sib &&
     (sib.classList.contains("xat-translation") ||
       sib.classList.contains("xat-error") ||
-      sib.classList.contains("xat-loading"))
+      sib.classList.contains("xat-loading") ||
+      sib.classList.contains("xat-votes"))
   ) {
     const next = sib.nextElementSibling;
     sib.remove();
@@ -173,7 +302,8 @@ function enqueue(el) {
     lastText.set(el, norm);
     return;
   }
-  lastText.set(el, norm); // 记录文本基准，用于检测「显示更多」等后续展开
+    lastText.set(el, norm); // 记录文本基准，用于检测「显示更多」等后续展开
+    if (voteButtons) attachVoteBar(el, norm); // 标记按钮挂在帖子正文上（与译文无关）
 
   let id = textToId.get(text);
   if (id == null) {
@@ -259,6 +389,7 @@ function renderTranslation(tweetId, segs) {
     clone.removeAttribute("data-xat-id");
     clone.removeAttribute("lang");
     clone.classList.add("xat-translation");
+    stripTruncation(clone);
 
     const nodes = collectTextNodes(clone);
     if (nodes.length !== segs.length) {
@@ -279,6 +410,16 @@ function renderTranslation(tweetId, segs) {
     removeLoading(el);
     el.insertAdjacentElement("afterend", clone);
   }
+}
+
+// X 对长推文/引用推文做「显示更多」截断时，会在 tweetText 上挂内联的
+// 行数钳制/高度限制样式；克隆译文若继承这些样式会被裁掉尾行，全部解除
+function stripTruncation(clone) {
+  clone.style.removeProperty("-webkit-line-clamp");
+  clone.style.removeProperty("max-height");
+  clone.style.removeProperty("height");
+  if (clone.style.overflow === "hidden") clone.style.overflow = "visible";
+  if (clone.style.display === "-webkit-box") clone.style.display = "block";
 }
 
 function markError(id, reason, oneEl) {
@@ -333,6 +474,113 @@ function buildTranslationEl(translated, refEl) {
   }
   return div;
 }
+
+// ---------- 帖子有用/没用投票（挂在帖子正文上，本地记录，弹窗里看今日统计） ----------
+
+// 在帖子元素后放置投票栏；已存在则跳过（scan 高频触发，防重复）
+function attachVoteBar(el, key) {
+  if (el.nextElementSibling?.classList.contains("xat-votes")) return;
+  el.insertAdjacentElement("afterend", buildVoteBar(key, authorOf(el)));
+}
+
+// 从帖子 DOM 提取作者：handle 来自时间戳链接 /{handle}/status/{id}；
+// 引用推文以 quoteTweet 容器为界，避免归到外层帖子的作者头上
+function authorOf(el) {
+  const scope = el.closest('[data-testid="quoteTweet"]') || el.closest("article");
+  if (!scope) return null;
+  const href = scope.querySelector('a[href*="/status/"]')?.getAttribute("href") || "";
+  const m = href.match(/^\/([^/]+)\/status\//);
+  if (!m) return null;
+  const nameEl = scope.querySelector('[data-testid="User-Name"]');
+  const name = nameEl ? nameEl.textContent.split("·")[0].trim() : "";
+  return { handle: m[1], name };
+}
+
+function buildVoteBar(key, author) {
+  const bar = document.createElement("div");
+  bar.className = "xat-votes";
+  const good = document.createElement("button");
+  good.type = "button";
+  good.className = "xat-vote xat-vote-good";
+  good.title = "这个帖子有用";
+  good.textContent = "⭐";
+  const bad = document.createElement("button");
+  bad.type = "button";
+  bad.className = "xat-vote xat-vote-bad";
+  bad.title = "这个帖子没用";
+  bad.textContent = "👎";
+  good.addEventListener("click", () => castVote(key, "good", bar, author));
+  bad.addEventListener("click", () => castVote(key, "bad", bar, author));
+  bar.appendChild(good);
+  bar.appendChild(bad);
+  restoreVote(key, bar);
+  return bar;
+}
+
+async function restoreVote(key, bar) {
+  try {
+    const { votes } = await chrome.storage.local.get("votes");
+    const v = votes?.[key];
+    if (!v) return;
+    bar.querySelector(`.xat-vote-${v.vote}`)?.classList.add("on");
+  } catch {
+    /* 投票恢复失败不影响译文 */
+  }
+}
+
+async function castVote(key, vote, bar, author) {
+  try {
+    const { votes, voteTotals, authors } = await chrome.storage.local.get([
+      "votes",
+      "voteTotals",
+      "authors",
+    ]);
+    const all = votes || {};
+    const totals = voteTotals || { good: 0, bad: 0 };
+    const byAuthor = authors || {};
+    const cur = all[key];
+
+    // 再点同一个 = 取消；点另一个 = 改票。总量计数同步增减
+    let delta;
+    if (cur?.vote === vote) {
+      delete all[key];
+      delta = -1;
+    } else {
+      if (cur) totals[cur.vote] = Math.max(0, (totals[cur.vote] || 0) - 1);
+      delta = cur ? 0 : 1;
+      all[key] = { vote, date: todayStr(), excerpt: key.slice(0, 80) };
+    }
+    if (delta !== 0) totals[vote] = Math.max(0, (totals[vote] || 0) + delta);
+
+    // 作者归类：好博主观测数据，长期保留（不随 7 天清理）
+    if (author?.handle && delta !== 0) {
+      const a = byAuthor[author.handle] || { name: author.name, good: 0, bad: 0, last: "" };
+      if (author.name) a.name = author.name;
+      a[vote] = Math.max(0, (a[vote] || 0) + delta);
+      a.last = todayStr();
+      byAuthor[author.handle] = a;
+    }
+
+    // 帖子标记只保留最近 7 天，控制体积
+    const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    for (const [k, v] of Object.entries(all)) {
+      if (!v.date || new Date(v.date + "T23:59:59") < cutoff) delete all[k];
+    }
+    await chrome.storage.local.set({ votes: all, voteTotals: totals, authors: byAuthor });
+    bar.querySelectorAll(".xat-vote").forEach((b) => b.classList.remove("on"));
+    const now = all[key];
+    if (now) bar.querySelector(`.xat-vote-${now.vote}`)?.classList.add("on");
+  } catch (e) {
+    console.warn("[X AI 翻译器] 投票保存失败：", e);
+  }
+}
+
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+// ---------- 图片 OCR 翻译（需在设置里配置视觉模型） ----------
 
 // 还原原帖里的富文本观感：URL / @提及 / #话题 渲染成蓝色可点击链接，其余为纯文本
 const RICH_TOKEN_RE =

@@ -9,6 +9,10 @@ const DEFAULT_SETTINGS = {
   baseURL: "", // 例如 http://localhost:8000/v1
   apiKey: "",
   model: "",
+  visionModel: "", // 可选：视觉模型名，配置后启用图片 OCR 翻译
+  visionBaseURL: "", // 可选：视觉服务地址，留空则用主服务地址
+  statsEnabled: true, // 用量统计：关闭后不记录翻译段数与 token
+  voteButtonsEnabled: true, // 帖子标记：关闭后帖子下方不显示 ⭐/👎 按钮
   targetLang: "简体中文",
 };
 
@@ -32,8 +36,26 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       .catch((e) => sendResponse({ error: errText(e) }));
     return true; // 异步响应
   }
+  if (msg?.type === "ocrTranslate") {
+    handleOcrTranslate(msg.src)
+      .then((r) => sendResponse(r))
+      .catch((e) => sendResponse({ error: errText(e) }));
+    return true;
+  }
   if (msg?.type === "listModels") {
     listModels()
+      .then((r) => sendResponse(r))
+      .catch((e) => sendResponse({ error: errText(e) }));
+    return true;
+  }
+  if (msg?.type === "getStats") {
+    getStats()
+      .then((r) => sendResponse(r))
+      .catch((e) => sendResponse({ error: errText(e) }));
+    return true;
+  }
+  if (msg?.type === "manageStats") {
+    handleManage(msg.action, msg.handle)
       .then((r) => sendResponse(r))
       .catch((e) => sendResponse({ error: errText(e) }));
     return true;
@@ -67,6 +89,7 @@ async function handleTranslate(items) {
   }
 
   // 2. 未命中的分批请求
+  if (settings.statsEnabled !== false) addStats({ segs: need.length });
   for (let i = 0; i < need.length; i += BATCH_SIZE) {
     const chunk = need.slice(i, i + BATCH_SIZE);
     const translations = await translateTexts(
@@ -206,6 +229,27 @@ function joinURL(base, path) {
 }
 
 async function chat(settings, userPrompt) {
+  return chatMessages(settings, [
+    { role: "system", content: SYSTEM_PROMPT },
+    { role: "user", content: userPrompt },
+  ]);
+}
+
+// 视觉模型 OCR：图片转成 OpenAI vision 格式的 image_url content
+async function chatVision(settings, userPrompt, imageDataUrl) {
+  return chatMessages(settings, [
+    { role: "system", content: SYSTEM_PROMPT },
+    {
+      role: "user",
+      content: [
+        { type: "text", text: userPrompt },
+        { type: "image_url", image_url: { url: imageDataUrl } },
+      ],
+    },
+  ]);
+}
+
+async function chatMessages(settings, messages) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
@@ -218,10 +262,7 @@ async function chat(settings, userPrompt) {
       signal: controller.signal,
       body: JSON.stringify({
         model: settings.model,
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: userPrompt },
-        ],
+        messages,
         temperature: 0.2,
         max_tokens: 4096,
       }),
@@ -234,10 +275,192 @@ async function chat(settings, userPrompt) {
     const data = await res.json();
     const text = data?.choices?.[0]?.message?.content;
     if (!text) throw new Error("接口返回内容为空");
+    const usage = data?.usage || {};
+    if (settings.statsEnabled !== false) {
+      addStats({
+        requests: 1,
+        prompt: usage.prompt_tokens || 0,
+        completion: usage.completion_tokens || 0,
+      });
+    }
     return text;
   } finally {
     clearTimeout(timer);
   }
+}
+
+// ---------- 图片 OCR 翻译（点击图片上的按钮触发，译文按坐标贴回图片） ----------
+
+const OCR_PROMPT = (lang) =>
+  `找出图片中所有含自然语言文字的区域（标题、句子、说明、标签），逐块翻译成${lang}。只输出一个 JSON 数组，不要输出任何其他文字或代码块标记：\n` +
+  `[{"box":[x1,y1,x2,y2],"dst":"译文"}]\n` +
+  `规则：\n` +
+  `- box 是文字块的边界框，使用 0-1000 的归一化坐标（相对图片宽高），x1<x2、y1<y2，框要完整包住该块文字并稍微留边\n` +
+  `- 把属于同一句话/同一段落的相邻文字合并成一个块，不要按行或按单词拆成碎块\n` +
+  `- 数字、代码、JSON、URL 与所在文字块一起处理：在 dst 中原样保留，不要单独成块，不要翻译它们\n` +
+  `- 忽略纯数字、纯符号的区域（如独立的小数、百分比、时间戳），它们不算文字块\n` +
+  `- dst 是通顺的${lang}文本，不要夹带 JSON 结构、引号或原文\n` +
+  `- 图片里没有文字时输出 []`;
+
+async function handleOcrTranslate(src) {
+  const settings = await getSettings();
+  if (!settings.visionModel) throw new Error("未配置视觉模型：请到高级设置填写");
+  if (!settings.baseURL || !settings.model) {
+    throw new Error("请先在插件弹窗里配置服务地址和模型名");
+  }
+
+  const cached = await cacheGet(src, "@@ocr");
+  if (cached != null) return JSON.parse(cached);
+
+  const dataUrl = await fetchImageDataUrl(src);
+  // 视觉服务可以和主服务不同端点：visionBaseURL 留空时沿用主地址，API Key 复用主配置
+  const visionSettings = {
+    ...settings,
+    model: settings.visionModel,
+    baseURL: settings.visionBaseURL || settings.baseURL,
+  };
+  const raw = String(await chatVision(visionSettings, OCR_PROMPT(settings.targetLang), dataUrl)).trim();
+  if (settings.statsEnabled !== false) addStats({ segs: 1 });
+
+  const payload = parseOcrPayload(raw);
+  await cacheSet(src, "@@ocr", JSON.stringify(payload));
+  return payload;
+}
+
+// 解析视觉模型输出：优先取坐标块；JSON 形状但无有效块时返回空（不把 JSON 当译文）；
+// 完全不是 JSON 的纯文本才降级贴在图片底部
+function parseOcrPayload(raw) {
+  const m = raw.match(/\[[\s\S]*\]/);
+  if (!m) return { regions: [], text: raw.replace(/^```[\s\S]*?```$/, "").trim() };
+  try {
+    const arr = JSON.parse(m[0]);
+    if (Array.isArray(arr)) {
+      const regions = arr
+        .filter((r) => r && Array.isArray(r.box) && r.box.length === 4 && typeof r.dst === "string" && r.dst.trim())
+        .map((r) => ({
+          box: r.box.map((n) => Math.min(1000, Math.max(0, Number(n) || 0))),
+          dst: r.dst.trim(),
+        }))
+        .filter((r) => {
+          if (r.box[2] <= r.box[0] || r.box[3] <= r.box[1]) return false;
+          if (r.dst.length > 200) return false; // 异常长的块基本是模型输出失控
+          // 纯数字/符号块是模型把小数、时间戳当文字了，丢弃
+          return /[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7a3a-z]/i.test(r.dst);
+        })
+        .map((r) => padBox(r));
+      if (regions.length) return { regions: regions.slice(0, 40) };
+    }
+  } catch {
+    /* JSON 畸形，按空处理 */
+  }
+  return { regions: [], text: "" };
+}
+
+// 贴块四周外扩一点，盖住原文字的边缘，避免原译文错位重叠
+function padBox(r) {
+  const [x1, y1, x2, y2] = r.box;
+  const w = x2 - x1;
+  const h = y2 - y1;
+  const px = w * 0.06;
+  const py = h * 0.12;
+  return {
+    box: [
+      Math.max(0, x1 - px),
+      Math.max(0, y1 - py),
+      Math.min(1000, x2 + px),
+      Math.min(1000, y2 + py),
+    ],
+    dst: r.dst,
+  };
+}
+
+// 后台 fetch 图片转 dataURL（不受页面 CORS 限制；SW 里没有 FileReader，手写 base64）
+async function fetchImageDataUrl(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`图片下载失败 HTTP ${res.status}`);
+  const blob = await res.blob();
+  const buf = await blob.arrayBuffer();
+  const bytes = new Uint8Array(buf);
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return `data:${blob.type || "image/jpeg"};base64,${btoa(bin)}`;
+}
+
+// ---------- 用量统计（今日：段数 / 请求数 / 真实 token，跨天自动重置） ----------
+
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+async function addStats(delta) {
+  const { stats, totals } = await chrome.storage.local.get(["stats", "totals"]);
+  const fresh = { segs: 0, requests: 0, prompt: 0, completion: 0 };
+  const s = stats?.date === todayStr() ? stats : { date: todayStr(), ...fresh };
+  const t = totals || { ...fresh };
+  for (const k of Object.keys(fresh)) {
+    s[k] += delta[k] || 0;
+    t[k] += delta[k] || 0;
+  }
+  await chrome.storage.local.set({ stats: s, totals: t }).catch(() => {});
+}
+
+async function getStats() {
+  const [{ stats }, { totals }, { votes }, { voteTotals }, { authors }] = await Promise.all([
+    chrome.storage.local.get("stats"),
+    chrome.storage.local.get("totals"),
+    chrome.storage.local.get("votes"),
+    chrome.storage.local.get("voteTotals"),
+    chrome.storage.local.get("authors"),
+  ]);
+  const today = todayStr();
+  const fresh = { segs: 0, requests: 0, prompt: 0, completion: 0 };
+  const s = stats?.date === today ? stats : { date: today, ...fresh };
+  let good = 0;
+  let bad = 0;
+  for (const v of Object.values(votes || {})) {
+    if (v?.date === today) v.vote === "good" ? good++ : bad++;
+  }
+  // 博主榜单：按有用数降序取前 10
+  const list = Object.entries(authors || {})
+    .map(([handle, a]) => ({ handle, name: a.name || "", good: a.good || 0, bad: a.bad || 0 }))
+    .sort((a, b) => b.good - a.good || a.bad - b.bad)
+    .slice(0, 10);
+  return {
+    stats: s,
+    totals: totals || fresh,
+    votes: { good, bad },
+    voteTotals: voteTotals || { good: 0, bad: 0 },
+    authors: list,
+  };
+}
+
+// ---------- 数据管理（高级设置里的重置/清空/移除） ----------
+
+async function handleManage(action, handle) {
+  if (action === "resetTranslate") {
+    await chrome.storage.local.remove(["stats", "totals"]);
+  } else if (action === "clearVotes") {
+    await chrome.storage.local.remove(["votes", "voteTotals"]);
+  } else if (action === "clearAuthors") {
+    await chrome.storage.local.remove(["authors"]);
+  } else if (action === "clearCache") {
+    const all = await chrome.storage.local.get(null);
+    const keys = Object.keys(all).filter((k) => k.startsWith("c_")); // 译文缓存键前缀，见 hashKey
+    if (keys.length) await chrome.storage.local.remove(keys);
+    return { ok: true, count: keys.length };
+  } else if (action === "deleteAuthor" && handle) {
+    const { authors } = await chrome.storage.local.get("authors");
+    if (authors?.[handle]) {
+      delete authors[handle];
+      await chrome.storage.local.set({ authors });
+    }
+  } else {
+    throw new Error(`未知操作：${action}`);
+  }
+  return { ok: true };
 }
 
 // 拉取模型列表（vLLM: GET {baseURL}/models），自动尝试补 /v1
@@ -266,7 +489,9 @@ async function listModels() {
   throw new Error(`无法获取模型列表（${errText(lastErr)}），请检查服务地址`);
 }
 
-// ---------- 会话级缓存（chrome.storage.session，浏览器关闭即清空） ----------
+// ---------- 译文缓存（chrome.storage.local，24 小时过期：刷下去再刷回来不重复花钱） ----------
+
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 function hashKey(lang, text) {
   let h = 5381;
@@ -277,12 +502,17 @@ function hashKey(lang, text) {
 
 async function cacheGet(text, lang) {
   const key = hashKey(lang, text);
-  const obj = await chrome.storage.session.get(key);
-  const v = obj?.[key];
-  return typeof v === "string" ? v : null;
+  const obj = await chrome.storage.local.get(key);
+  const entry = obj?.[key];
+  if (!entry || typeof entry.v !== "string") return null;
+  if (Date.now() - entry.t > CACHE_TTL_MS) {
+    chrome.storage.local.remove(key).catch(() => {});
+    return null;
+  }
+  return entry.v;
 }
 
 async function cacheSet(text, lang, translated) {
   const key = hashKey(lang, text);
-  await chrome.storage.session.set({ [key]: translated }).catch(() => {});
+  await chrome.storage.local.set({ [key]: { v: translated, t: Date.now() } }).catch(() => {});
 }

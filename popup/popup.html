@@ -5,45 +5,120 @@
   <link rel="stylesheet" href="popup.css" />
 </head>
 <body>
-  <h1>X AI 翻译器</h1>
+  <!-- ========== 主视图：连接即用的最小集 ========== -->
+  <section id="viewMain" class="view">
+    <header class="head">
+      <img class="head-icon" src="../icons/icon48.png" alt="" />
+      <h1>X AI 翻译器</h1>
+    </header>
 
-  <label class="row toggle-row">
-    <span>自动翻译（关闭后帖子底部显示「翻译帖子」按钮）</span>
-    <input type="checkbox" id="enabled" />
-  </label>
+    <label class="row row-toggle" for="enabled">
+      <span class="row-text">
+        <span class="label-strong">自动翻译</span>
+        <span class="sub">关闭后在帖子下方显示「翻译」按钮</span>
+      </span>
+      <input type="checkbox" id="enabled" class="switch" />
+    </label>
 
-  <label class="row">
-    <span>服务地址（OpenAI 兼容 baseURL）</span>
-    <input type="text" id="baseURL" placeholder="例如 http://localhost:8000/v1" />
-  </label>
+    <div class="divider" role="presentation"></div>
 
-  <label class="row">
-    <span>API Key（vLLM 未设鉴权可留空）</span>
-    <input type="password" id="apiKey" placeholder="sk-..." autocomplete="off" />
-  </label>
+    <label class="row">
+      <span class="label">服务地址<span class="hint">（OpenAI 兼容）</span></span>
+      <input type="text" id="baseURL" placeholder="如 http://localhost:8000/v1" spellcheck="false" />
+    </label>
 
-  <div class="row">
-    <span>模型</span>
-    <div class="model-row">
-      <input type="text" id="model" list="modelList" placeholder="模型名" />
-      <datalist id="modelList"></datalist>
-      <button id="btnModels" type="button" title="从服务拉取模型列表">拉取</button>
+    <label class="row">
+      <span class="label">API Key<span class="hint">（未设鉴权可留空）</span></span>
+      <input type="password" id="apiKey" placeholder="sk-…" autocomplete="off" />
+    </label>
+
+    <div class="row">
+      <span class="label">模型</span>
+      <div class="inline">
+        <input type="text" id="model" list="modelList" placeholder="模型名" spellcheck="false" />
+        <datalist id="modelList"></datalist>
+        <button id="btnModels" type="button" title="从服务拉取模型列表">拉取</button>
+      </div>
     </div>
-  </div>
 
-  <label class="row">
-    <span>目标语言</span>
-    <select id="targetLang">
-      <option>简体中文</option>
-      <option>繁體中文</option>
-      <option>English</option>
-      <option>日本語</option>
-      <option>한국어</option>
-    </select>
-  </label>
+    <label class="row">
+      <span class="label">目标语言</span>
+      <div class="inline">
+        <select id="targetLang">
+          <option>简体中文</option>
+          <option>繁體中文</option>
+          <option>English</option>
+          <option>日本語</option>
+          <option>한국어</option>
+        </select>
+      </div>
+    </label>
 
-  <button id="btnSave" class="primary">保存</button>
-  <div id="status" class="status"></div>
+    <button id="btnSave" class="primary" type="button">保存</button>
+    <div id="statusMain" class="status" role="status"></div>
+
+    <button id="btnAdvanced" class="ghost" type="button">高级设置</button>
+  </section>
+
+  <!-- ========== 高级视图：视觉模型 / 统计开关 / 数据管理 ========== -->
+  <section id="viewAdvanced" class="view hidden">
+    <header class="head">
+      <button id="btnBack" class="back" type="button" title="返回" aria-label="返回">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M14.96 18.96 8 12l6.96-6.96.71.708L9.418 12l6.25 6.25-.707.71z"/></svg>
+      </button>
+      <h1>高级设置</h1>
+    </header>
+
+    <label class="row">
+      <span class="label">视觉服务地址<span class="hint">（可选，留空用主服务地址）</span></span>
+      <input type="text" id="visionBaseURL" placeholder="如 http://localhost:8001/v1" spellcheck="false" />
+    </label>
+
+    <label class="row">
+      <span class="label">视觉模型<span class="hint">（可选，填了才翻译图片文字）</span></span>
+      <input type="text" id="visionModel" list="modelList" placeholder="如 Qwen2.5-VL，留空则跳过图片" spellcheck="false" />
+    </label>
+
+    <label class="row row-toggle" for="voteButtonsEnabled">
+      <span class="row-text">
+        <span class="label-strong">帖子标记</span>
+        <span class="sub">帖子下方显示 ⭐/👎 标记按钮</span>
+      </span>
+      <input type="checkbox" id="voteButtonsEnabled" class="switch" />
+    </label>
+
+    <label class="row row-toggle" for="statsEnabled">
+      <span class="row-text">
+        <span class="label-strong">用量统计</span>
+        <span class="sub">记录翻译段数与 token 消耗</span>
+      </span>
+      <input type="checkbox" id="statsEnabled" class="switch" />
+    </label>
+
+    <section id="statsWrap" class="stats">
+      <div id="usageGroup">
+        <h2>今日</h2>
+        <div id="statTranslate" class="stat-line">—</div>
+        <div id="statVotes" class="stat-line">—</div>
+        <h2>累计</h2>
+        <div id="statTotals" class="stat-line">—</div>
+      </div>
+      <h2>博主归类 <span class="hint">按有用排序，✕ 可移除</span></h2>
+      <div id="statAuthors" class="stat-line">—</div>
+    </section>
+
+    <div id="manageWrap" class="manage-grid">
+      <button id="btnResetTranslate" class="danger" type="button">重置翻译统计</button>
+      <button id="btnClearVotes" class="danger" type="button">清空帖子标记</button>
+      <button id="btnClearAuthors" class="danger" type="button">清空博主归类</button>
+      <button id="btnClearCache" class="danger" type="button">清空翻译缓存</button>
+    </div>
+    <div id="statsOffHint" class="stats-off hidden">用量统计已关闭，开启后开始记录</div>
+
+    <div id="statusAdv" class="status" role="status"></div>
+
+    <button id="btnSaveAdv" class="primary" type="button">保存</button>
+  </section>
 
   <script src="popup.js"></script>
 </body>
