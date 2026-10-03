@@ -1,0 +1,104 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "X AI Translator 工作原理",
+    "locale": "zh-CN",
+    "output": "architecture.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/muerzy/x-ai-auto-translator",
+      "revision": "f81cea6c1e1620f54773a804e614fb1928231ee8"
+    },
+    "viewBox": [1280, 430]
+  },
+  "components": [
+    {
+      "id": "xcom",
+      "type": "external",
+      "label": "X 页面",
+      "sublabel": "x.com 帖子 · 评论 · 简介",
+      "brand": "x",
+      "pos": [40, 280],
+      "size": [160, 76]
+    },
+    {
+      "id": "content",
+      "type": "frontend",
+      "label": "Content Script",
+      "sublabel": "content.js",
+      "tag": "视口检测 · 片段切片 · DOM 克隆",
+      "pos": [330, 280],
+      "size": [210, 76],
+      "sources": [{ "path": "content/content.js" }]
+    },
+    {
+      "id": "sw",
+      "type": "backend",
+      "label": "Service Worker",
+      "sublabel": "background.js",
+      "tag": "占位符保护 · 批量合并 · 缓存",
+      "pos": [720, 280],
+      "size": [210, 76],
+      "sources": [{ "path": "background.js" }]
+    },
+    {
+      "id": "llm",
+      "type": "cloud",
+      "label": "OpenAI 兼容接口",
+      "sublabel": "vLLM / Ollama / GLM / DeepSeek…",
+      "pos": [1070, 280],
+      "size": [170, 76]
+    },
+    {
+      "id": "popup",
+      "type": "frontend",
+      "label": "设置弹窗",
+      "sublabel": "popup",
+      "tag": "自动/手动模式 · 服务配置",
+      "pos": [330, 90],
+      "size": [210, 76],
+      "sources": [{ "path": "popup/popup.js" }]
+    },
+    {
+      "id": "storage",
+      "type": "database",
+      "label": "chrome.storage",
+      "sublabel": "local 配置 · session 缓存",
+      "pos": [720, 90],
+      "size": [210, 76]
+    }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "浏览器扩展 · Manifest V3", "wraps": ["content", "sw", "popup", "storage"] }
+  ],
+  "connections": [
+    { "id": "observe", "from": "xcom", "to": "content", "label": "观察帖子/简介进入视口", "variant": "emphasis" },
+    { "id": "send", "from": "content", "to": "sw", "label": "片段批量（300ms 攒批）", "labelDy": 55 },
+    { "id": "api", "from": "sw", "to": "llm", "label": "POST /chat/completions", "labelDy": 62 },
+    { "id": "back", "from": "sw", "to": "content", "label": "译文（缓存命中直返）", "variant": "dashed", "labelDy": -39 },
+    { "id": "cfg", "from": "popup", "to": "storage", "label": "读写配置" },
+    { "id": "cache", "from": "storage", "to": "sw", "label": "译文缓存", "labelDy": 24 }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "翻译链路",
+      "items": [
+        "滚入视口即翻；手动模式逐条点「翻译」按钮",
+        "emoji / 链接 / 话题占位符保护，代码保证零丢失",
+        "译文克隆原帖 DOM，排版与原帖完全一致"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "省钱设计",
+      "items": ["同屏片段合并请求（≤10 条/次）", "同文本会话级缓存，只翻一次"]
+    },
+    {
+      "dot": "rose",
+      "title": "隐私",
+      "items": ["API Key 仅存本地 chrome.storage", "请求直连自建服务，无第三方中转"]
+    }
+  ]
+}

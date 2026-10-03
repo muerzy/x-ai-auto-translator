@@ -49,24 +49,13 @@
 
 ## 🧠 工作原理
 
-```
-x.com 页面                            扩展后台 (service worker)
-──────────                            ──────────────────────
-MutationObserver 发现目标元素
-  (tweetText / UserDescription)
-        │
-IntersectionObserver 视口检测
-(或手动模式：点击「翻译」按钮)
-        │
-按 DOM 文本节点切片段                查会话缓存（命中直接返回）
-(链接/emoji 不进模型)                      │ 未命中
-        │                                 ▼
-批量队列 (300ms 攒批) ──发消息──▶  占位符保护 → 合并请求(≤10条)
-                                    → OpenAI 兼容接口
-                                    批量失败 → 自动降级逐条重试
-克隆原帖 DOM，回填译文   ◀──────  结果写回会话缓存
-(结构/链接/样式 100% 一致)
-```
+<p align="center">
+  <img src="docs/architecture.png" width="720" alt="架构图：X 页面 → Content Script → Service Worker → OpenAI 兼容接口" />
+</p>
+
+<p align="center"><sub>📈 <a href="docs/architecture.html">交互版架构图</a>（可缩放 / 搜索 / 聚焦，含明暗主题）</sub></p>
+
+一句话流程：**Content Script** 观察 x.com 页面，帖子/简介滚入视口后按 DOM 文本节点切片段，批量（300ms 攒批）发给 **Service Worker**；后者用占位符保护 emoji/链接/话题、合并请求（≤10 条/次）调用 OpenAI 兼容接口并做会话缓存，批量失败自动降级逐条重试；译文返回后**克隆原帖 DOM、仅替换文字节点**，排版与原帖完全一致。
 
 选择器使用 X 的 `data-testid` 稳定锚点（class 名是随机生成的，不可靠）；虚拟滚动回收 DOM 后重新挂载的推文会命中缓存，不产生重复请求。
 
@@ -116,6 +105,7 @@ background.js          service worker：调 AI 接口、占位符保护、批量
 content/content.js     页面脚本：发现推文/简介、视口检测、片段翻译、DOM 克隆渲染译文
 content/content.css    译文/按钮/加载动画样式（明暗主题自适应）
 popup/                 设置弹窗（模式开关 / 服务地址 / key / 模型 / 目标语言）
+docs/                  架构图（archify 生成的交互式 HTML + PNG + 规格 JSON）
 icons/                 扩展图标
 screenshots/           README 截图
 make-icons.ps1         图标生成脚本（换图标时改路径重跑）
