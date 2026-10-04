@@ -145,53 +145,111 @@
   background: rgba(15, 20, 25, 0.88) !important;
 }
 
-/* 译文贴块：盖在原文字位置上 */
+/* 图片内容解读：黑色半透明面板贴图片底部，白字 markdown 排版，可滚动 */
 
-.xat-region {
-  position: absolute;
-  z-index: 8;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 1px 3px;
-  border-radius: 3px;
-  background: rgba(255, 255, 255, 0.94);
-  color: #0f1419;
-  font-weight: 500;
-  line-height: 1.15;
-  text-align: center;
-  overflow: hidden;
-  overflow-wrap: anywhere; /* 长数字/无空格长串允许在任意点折行 */
-  animation: xat-region-in 180ms ease-out;
-}
-
-@keyframes xat-region-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-/* 降级：模型没返回坐标时，整段译文贴在图片底部 */
-
-.xat-region-fallback {
+.xat-photo-desc {
   position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
+  max-height: 100%;
   z-index: 8;
-  max-height: 55%;
-  padding: 8px 10px;
-  background: rgba(255, 255, 255, 0.94);
-  color: #0f1419;
-  font-size: 13px;
-  line-height: 1.4;
-  white-space: pre-wrap;
+  padding: 12px 14px;
+  background: rgba(0, 0, 0, 0.74);
+  backdrop-filter: blur(3px);
+  color: #ffffff;
+  font-size: 14px;
+  line-height: 1.6;
   overflow-wrap: break-word;
   overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
   animation: xat-region-in 180ms ease-out;
+}
+
+/* 面板内滚动条：黑色半透明细条（webkit 系） */
+
+.xat-photo-desc::-webkit-scrollbar {
+  width: 6px;
+}
+
+.xat-photo-desc::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.xat-photo-desc::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.28);
+  border-radius: 3px;
+}
+
+.xat-photo-desc::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.45);
+}
+
+/* markdown 元素（深色面板配色） */
+
+.xat-photo-desc .xat-md-p {
+  margin: 0 0 8px;
+}
+
+.xat-photo-desc .xat-md-p:last-child,
+.xat-photo-desc .xat-md-ul:last-child,
+.xat-photo-desc .xat-md-pre:last-child {
+  margin-bottom: 0;
+}
+
+.xat-photo-desc .xat-md-h {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 10px 0 6px;
+}
+
+.xat-photo-desc .xat-md-h:first-child {
+  margin-top: 0;
+}
+
+.xat-photo-desc strong {
+  font-weight: 600;
+}
+
+.xat-photo-desc em {
+  font-style: italic;
+}
+
+.xat-photo-desc .xat-md-ul {
+  margin: 0 0 8px;
+  padding-left: 18px;
+}
+
+.xat-photo-desc .xat-md-ul li {
+  margin: 3px 0;
+}
+
+.xat-photo-desc .xat-md-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.88em;
+  background: rgba(255, 255, 255, 0.14);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.xat-photo-desc .xat-md-pre {
+  margin: 0 0 8px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow-x: auto;
+}
+
+.xat-photo-desc .xat-md-pre code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  white-space: pre;
+}
+
+.xat-photo-desc a {
+  color: #9ecbff;
+  text-decoration: underline;
 }
 
 /* 失败提示：图片底部深色 toast，4 秒自动消失 */

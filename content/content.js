@@ -156,41 +156,42 @@ function scan() {
   scanPhotos();
 }
 
-// ---------- 图片翻译：图片上的「翻译图片」按钮，点击后译文按坐标贴回原图 ----------
+// ---------- 图片解读：任何图片（不分语言）悬停出现「解释图片」按钮 ----------
 
 function scanPhotos() {
   for (const img of document.querySelectorAll('[data-testid="tweetPhoto"] img')) {
     if (img.dataset.xatPhoto) continue;
     const wrap = img.closest('[data-testid="tweetPhoto"]');
-    if (!wrap || !img.currentSrc) {
+    if (!wrap) {
       img.dataset.xatPhoto = "skip";
       continue;
     }
+    if (!img.currentSrc) continue; // 懒加载尚未完成：不标记，等下一次扫描重试
     img.dataset.xatPhoto = "idle";
     if (getComputedStyle(wrap).position === "static") wrap.classList.add("xat-photo-rel");
     wrap.appendChild(buildPhotoBtn(img, wrap));
   }
 }
 
-const photoState = new WeakMap(); // 图片容器 -> { payload, visible }，支持译文/原图切换
+const photoState = new WeakMap(); // 图片容器 -> { payload, visible }，支持解读/原图切换
 
 function buildPhotoBtn(img, wrap) {
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "xat-photo-btn";
-  btn.textContent = "翻译图片";
+  btn.textContent = "解释图片";
   btn.addEventListener("click", (e) => {
     e.stopPropagation(); // 别触发 X 的图片查看器
     e.preventDefault();
     if (btn.dataset.state === "loading") return;
-    // 已翻译：点击在译文贴图和原图之间切换
+    // 已解释：点击在解读面板和原图之间切换
     const st = photoState.get(wrap);
     if (btn.dataset.state === "done" && st) {
       st.visible = !st.visible;
       wrap
-        .querySelectorAll(".xat-region, .xat-region-fallback")
+        .querySelectorAll(".xat-photo-desc")
         .forEach((el) => (el.style.display = st.visible ? "" : "none"));
-      btn.textContent = st.visible ? "已翻译" : "显示译文";
+      btn.textContent = st.visible ? "已解释" : "显示解读";
       return;
     }
     if (btn.dataset.state === "done") return;
@@ -201,68 +202,156 @@ function buildPhotoBtn(img, wrap) {
 
 function translateImage(img, wrap, btn) {
   btn.dataset.state = "loading";
-  btn.textContent = "翻译中…";
+  btn.textContent = "解释中…";
   const src = img.currentSrc || img.src;
   chrome.runtime.sendMessage({ type: "ocrTranslate", src }, (resp) => {
     if (chrome.runtime.lastError || !resp || resp.error) {
       const reason = resp?.error || chrome.runtime.lastError?.message;
-      photoToast(wrap, reason || "翻译失败");
+      photoToast(wrap, reason || "解释失败");
       btn.dataset.state = "idle";
-      btn.textContent = "翻译图片";
+      btn.textContent = "解释图片";
       return;
     }
     btn.dataset.state = "done";
-    btn.textContent = "已翻译";
+    btn.textContent = "已解释";
     photoState.set(wrap, { payload: resp, visible: true });
-    renderPhotoRegions(wrap, resp);
+    renderPhotoDescription(wrap, resp);
   });
 }
 
-// 有坐标：逐块贴回原图位置；无坐标但有整段文本：贴在图片底部
-function renderPhotoRegions(wrap, { regions, text }) {
-  if (Array.isArray(regions) && regions.length) {
-    for (const r of regions) {
-      const [x1, y1, x2, y2] = r.box; // 0-1000 归一化
-      const div = document.createElement("div");
-      div.className = "xat-region";
-      div.style.left = x1 / 10 + "%";
-      div.style.top = y1 / 10 + "%";
-      div.style.width = (x2 - x1) / 10 + "%";
-      div.style.height = (y2 - y1) / 10 + "%";
-      div.textContent = r.dst;
-      wrap.appendChild(div);
-    }
-    fitRegionText(wrap); // 布局完成后按块高缩放字号
-    return;
-  }
-  if (text) {
-    const panel = document.createElement("div");
-    panel.className = "xat-region-fallback";
-    panel.textContent = text;
-    wrap.appendChild(panel);
-  }
+// 图片内容解读：黑色半透明面板 + 白字覆在图片上，markdown 渲染，长内容可滚动
+function renderPhotoDescription(wrap, { text }) {
+  wrap.querySelectorAll(".xat-photo-desc").forEach((el) => el.remove());
+  if (!text) return;
+  const panel = document.createElement("div");
+  panel.className = "xat-photo-desc";
+  renderMarkdown(panel, text);
+  wrap.appendChild(panel);
 }
 
-// 按每个贴块的像素高度定字号，再逐级收缩到内容放得下为止（长数字/长词会折行）
-function fitRegionText(wrap) {
-  requestAnimationFrame(() => {
-    const h = wrap.clientHeight;
-    if (!h) return;
-    for (const div of wrap.querySelectorAll(".xat-region")) {
-      const boxH = (parseFloat(div.style.height) / 100) * h;
-      let fs = Math.max(10, Math.min(26, boxH * 0.72));
-      div.style.fontSize = fs + "px";
-      let guard = 8;
-      while (
-        guard-- > 0 &&
-        fs > 9 &&
-        (div.scrollWidth > div.clientWidth + 1 || div.scrollHeight > div.clientHeight + 1)
-      ) {
-        fs -= 1;
-        div.style.fontSize = fs + "px";
+// 轻量 Markdown 渲染（安全：全程 DOM 构建，不使用 innerHTML）。
+// 支持：# 标题、- / 1. 列表、``` 代码块、**粗体**、*斜体*、`行内代码`、[文本](链接)
+const MD_INLINE_RE =
+  /(\*\*[^*]+\*\*|\*[^*\s][^*\n]*\*|`[^`]+`|\[[^\]]+\]\(https?:\/\/[^)\s]+\))/g;
+
+function renderMarkdown(container, md) {
+  const lines = String(md || "").split(/\r?\n/);
+  let para = [];
+  let list = null;
+  let pre = null;
+  const flushPara = () => {
+    if (para.length) {
+      const p = document.createElement("p");
+      p.className = "xat-md-p";
+      renderInline(p, para.join(" "));
+      container.appendChild(p);
+      para = [];
+    }
+  };
+  const flushList = () => {
+    if (list) {
+      container.appendChild(list);
+      list = null;
+    }
+  };
+  const flushAll = () => {
+    flushPara();
+    flushList();
+  };
+  for (const line of lines) {
+    const t = line.trim();
+    if (t.startsWith("```")) {
+      if (pre) {
+        container.appendChild(pre);
+        pre = null;
+      } else {
+        flushAll();
+        pre = document.createElement("pre");
+        pre.className = "xat-md-pre";
+        pre.appendChild(document.createElement("code"));
       }
+      continue;
     }
-  });
+    if (pre) {
+      pre.firstChild.appendChild(document.createTextNode(line + "\n"));
+      continue;
+    }
+    if (!t) {
+      flushAll();
+      continue;
+    }
+    const h = t.match(/^#{1,3}\s+(.*)/);
+    if (h) {
+      flushAll();
+      const el = document.createElement("div");
+      el.className = "xat-md-h";
+      renderInline(el, h[1]);
+      container.appendChild(el);
+      continue;
+    }
+    const ul = t.match(/^[-*•]\s+(.*)/);
+    if (ul) {
+      flushPara();
+      if (!list || list.tagName !== "UL") {
+        flushList();
+        list = document.createElement("ul");
+        list.className = "xat-md-ul";
+      }
+      const li = document.createElement("li");
+      renderInline(li, ul[1]);
+      list.appendChild(li);
+      continue;
+    }
+    const ol = t.match(/^\d+[.、)]\s+(.*)/);
+    if (ol) {
+      flushPara();
+      if (!list || list.tagName !== "OL") {
+        flushList();
+        list = document.createElement("ol");
+        list.className = "xat-md-ul";
+      }
+      const li = document.createElement("li");
+      renderInline(li, ol[1]);
+      list.appendChild(li);
+      continue;
+    }
+    flushList();
+    para.push(t);
+  }
+  if (pre) container.appendChild(pre);
+  flushAll();
+}
+
+function renderInline(el, text) {
+  let last = 0;
+  for (const m of String(text).matchAll(MD_INLINE_RE)) {
+    if (m.index > last) el.appendChild(document.createTextNode(text.slice(last, m.index)));
+    const tok = m[0];
+    if (tok.startsWith("**")) {
+      const b = document.createElement("strong");
+      b.textContent = tok.slice(2, -2);
+      el.appendChild(b);
+    } else if (tok.startsWith("`")) {
+      const c = document.createElement("code");
+      c.className = "xat-md-code";
+      c.textContent = tok.slice(1, -1);
+      el.appendChild(c);
+    } else if (tok.startsWith("[")) {
+      const link = tok.match(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/);
+      const a = document.createElement("a");
+      a.href = link[2];
+      a.textContent = link[1];
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      el.appendChild(a);
+    } else {
+      const em = document.createElement("em");
+      em.textContent = tok.slice(1, -1);
+      el.appendChild(em);
+    }
+    last = m.index + tok.length;
+  }
+  if (last < text.length) el.appendChild(document.createTextNode(text.slice(last)));
 }
 
 function photoToast(wrap, message) {

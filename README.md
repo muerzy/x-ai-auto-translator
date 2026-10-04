@@ -18,20 +18,14 @@
 
 ## 📸 使用效果
 
-**帖子翻译** —— 译文按原帖排版贴在原文下方，字号、链接、换行与原帖一致
+**帖子与图片翻译** —— 译文按原帖排版贴在原文下方；任何图片都可「解释图片」，视觉模型解读内容后以黑底白字面板覆在图片上，再点一下切回原图
 
 <p align="center">
-  <img src="screenshots/tweet-translation.png" width="520" alt="帖子翻译：译文贴在原文下方，格式与原帖一致" />
+  <img src="screenshots/tweet-before.png" width="49%" alt="翻译前：手动模式的「翻译帖子」按钮" />
+  <img src="screenshots/tweet-after.png" width="49%" alt="翻译后：帖子译文 + 图片解读面板" />
 </p>
 
-**图片翻译** —— 悬停图片点击「翻译图片」，译文按坐标贴回原图覆盖原文字，再点一下切回原图
-
-<p align="center">
-  <img src="screenshots/photo-before.png" width="49%" alt="翻译前：帖子译文与图片上的「翻译图片」按钮" />
-  <img src="screenshots/photo-after.png" width="49%" alt="翻译后：译文按坐标贴回图片覆盖原文字" />
-</p>
-
-**设置面板** —— 主视图只保留连接必需项；视觉模型、帖子标记、用量统计与数据管理收在高级设置
+**设置面板** —— 主视图只保留连接必需项；帖子标记、用量统计与数据管理收在高级设置
 
 <p align="center">
   <img src="screenshots/popup-main.png" width="49%" alt="主设置：开关与服务配置" />

@@ -1,18 +1,23 @@
-/* X 亮色设计语言（继承 x.com 的世界，Operate 模式）：
-   白底 / #0f1419 墨色 / #536471 次级 / #eff3f4 填充与分隔 / #1d9bf0 蓝仅用于焦点·开关·主按钮 */
+/* reui/shadcn 设计 token（New York 风格 · 亮色）：
+   zinc 中性色系 / 近黑主按钮 / 细边框卡片 / 聚焦光环。零构建原生 CSS 实现。
+   间距沿用 v0.3.0 无滚动调优值 */
 
 :root {
-  --text: #0f1419;
-  --text-2: #536471;
-  --fill: #eff3f4;
-  --fill-hover: #e6ebee;
-  --border: #cfd9de;
-  --divider: #eff3f4;
-  --blue: #1d9bf0;
-  --blue-hover: #1a8cd8;
-  --blue-ring: rgba(29, 155, 240, 0.18);
-  --green: #00805e; /* 深一档的语义绿：12px 小字在白底/#f7f9f9 上也要过 4.5:1 */
-  --red: #f4212e;
+  --fg: #09090b; /* zinc-950 */
+  --fg-muted: #71717a; /* zinc-500 */
+  --border: #e4e4e7; /* zinc-200 */
+  --border-hover: #d4d4d8; /* zinc-300 */
+  --primary: #18181b; /* zinc-900 */
+  --primary-hover: #2a2a2e;
+  --primary-fg: #fafafa; /* zinc-50 */
+  --secondary-hover: #f4f4f5; /* zinc-100 */
+  --ring: rgba(24, 24, 27, 0.1);
+  --danger: #dc2626; /* red-600 */
+  --success: #059669; /* emerald-600 */
+  --radius-s: 6px;
+  --radius-m: 8px;
+  --radius-l: 12px;
+  --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.05);
 }
 
 * {
@@ -29,9 +34,9 @@ body {
   width: 320px;
   max-height: 580px;
   overflow-y: auto;
-  padding: 12px 14px 8px;
+  padding: 12px 14px 10px;
   background: #fff;
-  color: var(--text);
+  color: var(--fg);
   font-size: 13px;
   line-height: 1.45;
   font-family: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
@@ -39,7 +44,7 @@ body {
 }
 
 ::selection {
-  background: rgba(29, 155, 240, 0.25);
+  background: #e4e4e7;
 }
 
 ::-webkit-scrollbar {
@@ -51,30 +56,26 @@ body {
   border-radius: 3px;
 }
 
-/* ---------- 视图切换 ---------- */
-
-.view.hidden {
-  display: none;
-}
-
 /* ---------- 头部 ---------- */
 
 .head {
   display: flex;
   align-items: center;
   gap: 9px;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
 }
 
 .head-icon {
   width: 26px;
   height: 26px;
-  border-radius: 7px;
+  border-radius: var(--radius-m);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-xs);
 }
 
 h1 {
-  font-size: 17px;
-  font-weight: 800;
+  font-size: 15px;
+  font-weight: 600;
   letter-spacing: -0.01em;
 }
 
@@ -86,13 +87,13 @@ h1 {
   height: 28px;
   padding: 0;
   border: none;
-  border-radius: 50%;
+  border-radius: var(--radius-m);
   background: none;
-  color: var(--text);
+  color: var(--fg);
 }
 
 .back:hover {
-  background: var(--fill);
+  background: var(--secondary-hover);
 }
 
 /* ---------- 表单 ---------- */
@@ -106,56 +107,55 @@ h1 {
   display: block;
   margin-bottom: 5px;
   font-size: 12px;
-  font-weight: 600;
-  color: var(--text-2);
+  font-weight: 500;
+  color: var(--fg);
 }
 
 .hint {
   font-weight: 400;
-  color: var(--text-2);
+  color: var(--fg-muted);
 }
 
 input[type="text"],
 input[type="password"],
 select {
   width: 100%;
-  padding: 6px 10px;
-  border: 1px solid transparent;
-  border-radius: 10px;
-  background: var(--fill);
-  color: var(--text);
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  background: #fff;
+  color: var(--fg);
   font-size: 13px;
-  caret-color: var(--blue);
-  transition: background-color 140ms ease-out, border-color 140ms ease-out, box-shadow 140ms ease-out;
+  caret-color: var(--fg);
+  transition: border-color 140ms ease-out, box-shadow 140ms ease-out;
 }
 
 input::placeholder {
-  color: #536471;
+  color: #a1a1aa; /* zinc-400 */
 }
 
 input:hover:not(:focus),
 select:hover:not(:focus) {
-  background: var(--fill-hover);
+  border-color: var(--border-hover);
 }
 
 input:focus,
 select:focus {
   outline: none;
-  background: #fff;
-  border-color: var(--blue);
-  box-shadow: 0 0 0 3px var(--blue-ring);
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--ring);
 }
 
 select {
   appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23536471'%3E%3Cpath d='M3.543 8.96l7.07 7.06a1.927 1.927 0 002.727 0l7.07-7.06-.707-.708-7.076 7.06a.927.927 0 01-1.313 0L4.25 8.252l-.707.708z'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2371717a'%3E%3Cpath d='M3.543 8.96l7.07 7.06a1.927 1.927 0 002.727 0l7.07-7.06-.707-.708-7.076 7.06a.927.927 0 01-1.313 0L4.25 8.252l-.707.708z'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 10px center;
   background-size: 15px;
   padding-right: 30px;
 }
 
-/* 拨动开关（X 的启用态是蓝轨道白滑块） */
+/* 拨动开关（shadcn：选中态近黑轨道） */
 
 .row-toggle {
   display: flex;
@@ -174,13 +174,13 @@ select {
 
 .label-strong {
   font-size: 13px;
-  font-weight: 700;
-  color: var(--text);
+  font-weight: 500;
+  color: var(--fg);
 }
 
 .sub {
   font-size: 12px;
-  color: var(--text-2);
+  color: var(--fg-muted);
 }
 
 .switch {
@@ -189,7 +189,7 @@ select {
   width: 36px;
   height: 20px;
   border-radius: 999px;
-  background: #cfd9de;
+  background: var(--border);
   position: relative;
   cursor: pointer;
   transition: background-color 160ms ease-out;
@@ -209,14 +209,19 @@ select {
 }
 
 .switch:checked {
-  background: var(--blue);
+  background: var(--primary);
 }
 
 .switch:checked::after {
   transform: translateX(16px);
 }
 
-/* 按钮 */
+.switch:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+/* ---------- 按钮 ---------- */
 
 .inline {
   display: flex;
@@ -231,19 +236,19 @@ select {
 
 button {
   flex: none;
-  padding: 8px 14px;
+  padding: 7px 12px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-m);
   background: #fff;
-  color: var(--text);
+  color: var(--fg);
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 500;
   cursor: pointer;
-  transition: background-color 140ms ease-out;
+  transition: background-color 140ms ease-out, border-color 140ms ease-out;
 }
 
 button:hover {
-  background: #f7f9f9;
+  background: var(--secondary-hover);
 }
 
 button:disabled {
@@ -255,19 +260,14 @@ button.primary {
   display: block;
   width: 100%;
   margin-top: 0;
-  padding: 7px 14px;
-  background: var(--blue);
-  border-color: transparent;
-  color: #fff;
+  padding: 7px 12px;
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--primary-fg);
 }
 
 button.primary:hover {
-  background: var(--blue-hover);
-}
-
-/* 高级视图：保存按钮上面是管理网格/统计面板（状态栏空时塌陷），单独补回间距 */
-#btnSaveAdv {
-  margin-top: 4px;
+  background: var(--primary-hover);
 }
 
 button.primary:active {
@@ -279,59 +279,58 @@ button.primary:active {
 button.ghost {
   display: block;
   width: 100%;
-  margin-top: 10px;
-  color: var(--text-2);
-  font-weight: 600;
+  margin-top: 8px;
+  color: var(--fg);
+  font-weight: 500;
 }
 
 button.ghost::after {
   content: "›";
   float: right;
-  font-weight: 400;
-  color: var(--text-2);
+  color: var(--fg-muted);
 }
 
 button:focus-visible,
 .switch:focus-visible,
 .back:focus-visible {
-  outline: 2px solid var(--blue);
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: 0 0 0 3px var(--ring), 0 0 0 1px var(--primary);
 }
 
-/* 危险操作（数据管理）：描边红字，二次确认变实底 */
+/* 危险操作（数据管理）：shadcn outline-destructive，二次确认变实底 */
 
 .manage-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 6px;
-  margin-top: 7px;
+  margin-top: 6px;
 }
 
 button.danger {
   padding: 5px 8px;
-  border-color: #f4212e55;
+  border-color: rgba(220, 38, 38, 0.35);
   background: #fff;
-  color: var(--red);
+  color: var(--danger);
   font-size: 12px;
 }
 
 button.danger:hover {
-  background: rgba(244, 33, 46, 0.06);
+  background: rgba(220, 38, 38, 0.05);
 }
 
 button.danger.armed {
-  background: var(--red);
-  border-color: var(--red);
+  background: var(--danger);
+  border-color: var(--danger);
   color: #fff;
 }
 
-/* 状态提示：空时完全塌陷，不在保存按钮下方留白 */
+/* 状态提示 */
 
 .status {
   margin-top: 7px;
   font-size: 12px;
   text-align: center;
-  color: var(--green);
+  color: var(--success);
 }
 
 .status:empty {
@@ -339,13 +338,13 @@ button.danger.armed {
 }
 
 .status.error {
-  color: var(--red);
+  color: var(--danger);
 }
 
 .stats-off {
-  margin-top: 10px;
+  margin-top: 8px;
   font-size: 12px;
-  color: var(--text-2);
+  color: var(--fg-muted);
   text-align: center;
 }
 
@@ -353,26 +352,28 @@ button.danger.armed {
   display: none;
 }
 
-/* ---------- 统计区 ---------- */
+/* ---------- 统计区（reui Frame：细边框卡片） ---------- */
 
 .divider {
   height: 1px;
   margin: 2px 0 10px;
-  background: var(--divider);
+  background: var(--border);
 }
 
 .stats {
   margin-top: 2px;
-  padding: 10px 11px 9px;
-  border-radius: 14px;
-  background: #f7f9f9;
+  padding: 9px 11px 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-l);
+  background: #fff;
+  box-shadow: var(--shadow-xs);
 }
 
 .stats h2 {
   margin: 0 0 2px;
   font-size: 12px;
-  font-weight: 700;
-  color: var(--text-2);
+  font-weight: 500;
+  color: var(--fg-muted);
 }
 
 .stats h2 + .stat-line {
@@ -380,13 +381,13 @@ button.danger.armed {
 }
 
 .stats h2:not(:first-child) {
-  margin-top: 3px;
+  margin-top: 2px;
 }
 
 .stat-line {
   font-size: 12px;
-  line-height: 1.55;
-  color: var(--text);
+  line-height: 1.5;
+  color: var(--fg);
   font-variant-numeric: tabular-nums;
 }
 
@@ -413,22 +414,22 @@ button.danger.armed {
   height: 18px;
   padding: 0;
   border: none;
-  border-radius: 50%;
+  border-radius: var(--radius-s);
   background: none;
-  color: var(--text-2);
+  color: var(--fg-muted);
   font-size: 12px;
   font-weight: 400;
   line-height: 1;
 }
 
 .author-del:hover {
-  background: rgba(244, 33, 46, 0.1);
-  color: var(--red);
+  background: rgba(220, 38, 38, 0.08);
+  color: var(--danger);
 }
 
 .author-counts {
   flex: none;
-  color: var(--text-2);
+  color: var(--fg-muted);
 }
 
 /* 统计行内的小图标（SVG，与数字同排对齐） */
@@ -437,4 +438,9 @@ button.danger.armed {
   display: inline-flex;
   vertical-align: -1.5px;
   margin: 0 1px;
+}
+
+/* 高级视图保存按钮：上面是管理网格/统计面板（状态栏空时塌陷），单独补间距 */
+#btnSaveAdv {
+  margin-top: 2px;
 }

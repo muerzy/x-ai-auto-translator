@@ -289,18 +289,16 @@ async function chatMessages(settings, messages) {
   }
 }
 
-// ---------- 图片 OCR 翻译（点击图片上的按钮触发，译文按坐标贴回图片） ----------
+// ---------- 图片解读（点击图片上的按钮触发）：视觉模型描述图片内容，半透明面板覆在图片上 ----------
 
-const OCR_PROMPT = (lang) =>
-  `找出图片中所有含自然语言文字的区域（标题、句子、说明、标签），逐块翻译成${lang}。只输出一个 JSON 数组，不要输出任何其他文字或代码块标记：\n` +
-  `[{"box":[x1,y1,x2,y2],"dst":"译文"}]\n` +
-  `规则：\n` +
-  `- box 是文字块的边界框，使用 0-1000 的归一化坐标（相对图片宽高），x1<x2、y1<y2，框要完整包住该块文字并稍微留边\n` +
-  `- 把属于同一句话/同一段落的相邻文字合并成一个块，不要按行或按单词拆成碎块\n` +
-  `- 数字、代码、JSON、URL 与所在文字块一起处理：在 dst 中原样保留，不要单独成块，不要翻译它们\n` +
-  `- 忽略纯数字、纯符号的区域（如独立的小数、百分比、时间戳），它们不算文字块\n` +
-  `- dst 是通顺的${lang}文本，不要夹带 JSON 结构、引号或原文\n` +
-  `- 图片里没有文字时输出 []`;
+const IMG_DESCRIBE_PROMPT = (lang) =>
+  `用${lang}总结这张图片的内容：这是一张什么图（截图/照片/漫画/表情包等）、在展示或说什么，图中文字的要点融入总结（外文先翻译成${lang}）。
+` +
+  `- 输出一段通顺的话，一般 1-3 句话；信息量特别大的图片可以适当加长，但不要逐项罗列界面元素或逐行复述文字，抓住重点
+` +
+  `- 代码、命令、URL 原样保留，不翻译
+` +
+  `- 只输出总结本身，不要开场白和结束语`;
 
 async function handleOcrTranslate(src) {
   const settings = await getSettings();
@@ -319,62 +317,16 @@ async function handleOcrTranslate(src) {
     model: settings.visionModel,
     baseURL: settings.visionBaseURL || settings.baseURL,
   };
-  const raw = String(await chatVision(visionSettings, OCR_PROMPT(settings.targetLang), dataUrl)).trim();
+  const text = String(
+    await chatVision(visionSettings, IMG_DESCRIBE_PROMPT(settings.targetLang), dataUrl)
+  ).trim();
   if (settings.statsEnabled !== false) addStats({ segs: 1 });
 
-  const payload = parseOcrPayload(raw);
+  const payload = { text };
   await cacheSet(src, "@@ocr", JSON.stringify(payload));
   return payload;
 }
 
-// 解析视觉模型输出：优先取坐标块；JSON 形状但无有效块时返回空（不把 JSON 当译文）；
-// 完全不是 JSON 的纯文本才降级贴在图片底部
-function parseOcrPayload(raw) {
-  const m = raw.match(/\[[\s\S]*\]/);
-  if (!m) return { regions: [], text: raw.replace(/^```[\s\S]*?```$/, "").trim() };
-  try {
-    const arr = JSON.parse(m[0]);
-    if (Array.isArray(arr)) {
-      const regions = arr
-        .filter((r) => r && Array.isArray(r.box) && r.box.length === 4 && typeof r.dst === "string" && r.dst.trim())
-        .map((r) => ({
-          box: r.box.map((n) => Math.min(1000, Math.max(0, Number(n) || 0))),
-          dst: r.dst.trim(),
-        }))
-        .filter((r) => {
-          if (r.box[2] <= r.box[0] || r.box[3] <= r.box[1]) return false;
-          if (r.dst.length > 200) return false; // 异常长的块基本是模型输出失控
-          // 纯数字/符号块是模型把小数、时间戳当文字了，丢弃
-          return /[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7a3a-z]/i.test(r.dst);
-        })
-        .map((r) => padBox(r));
-      if (regions.length) return { regions: regions.slice(0, 40) };
-    }
-  } catch {
-    /* JSON 畸形，按空处理 */
-  }
-  return { regions: [], text: "" };
-}
-
-// 贴块四周外扩一点，盖住原文字的边缘，避免原译文错位重叠
-function padBox(r) {
-  const [x1, y1, x2, y2] = r.box;
-  const w = x2 - x1;
-  const h = y2 - y1;
-  const px = w * 0.06;
-  const py = h * 0.12;
-  return {
-    box: [
-      Math.max(0, x1 - px),
-      Math.max(0, y1 - py),
-      Math.min(1000, x2 + px),
-      Math.min(1000, y2 + py),
-    ],
-    dst: r.dst,
-  };
-}
-
-// 后台 fetch 图片转 dataURL（不受页面 CORS 限制；SW 里没有 FileReader，手写 base64）
 async function fetchImageDataUrl(url) {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`图片下载失败 HTTP ${res.status}`);

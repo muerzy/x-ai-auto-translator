@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "X AI 翻译器",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "用自建 AI（OpenAI 兼容接口 / vLLM）自动翻译 X(Twitter) 的帖子与评论，译文显示在原文下方",
   "permissions": ["storage"],
   "host_permissions": ["http://*/*", "https://*/*"],
