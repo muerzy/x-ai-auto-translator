@@ -219,13 +219,18 @@ function translateImage(img, wrap, btn) {
   });
 }
 
-// 图片内容解读：黑色半透明面板 + 白字覆在图片上，markdown 渲染，长内容可滚动
+// 图片内容解读：黑色半透明面板 + 白字覆在图片上，markdown 渲染，长内容可滚动。
+// 双层结构：外层撑满图片并锁定高度，内层滚动——保证内容超出图片高度时在面板内滚动，
+// 而不是把面板顶出图片边界裁掉开头
 function renderPhotoDescription(wrap, { text }) {
   wrap.querySelectorAll(".xat-photo-desc").forEach((el) => el.remove());
   if (!text) return;
   const panel = document.createElement("div");
   panel.className = "xat-photo-desc";
-  renderMarkdown(panel, text);
+  const body = document.createElement("div");
+  body.className = "xat-photo-desc-body";
+  renderMarkdown(body, text);
+  panel.appendChild(body);
   wrap.appendChild(panel);
 }
 
